@@ -1,0 +1,143 @@
+# Работа компандера PCM сигналов
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Генерируем сигнал - равномерно распределенный СП с параметрами (0,1)
+def generate_signal(N=10000):
+# N - количество отсчетов в диапазоне от 0 до 1
+
+    # Иррациональные числа для нормированных частот
+    irrational_freqs = [np.pi, np.e, np.sqrt(2), np.sqrt(3), np.sqrt(5)]
+
+    # Генерируем равномерный сигнал в [0,1]
+    s_random = np.random.uniform(0, 1, N)
+
+    # Создание непериодического сигнала
+    t = np.arange(N)
+
+    # Инициализация нулевого массива
+    s_irr  = np.zeros(N) # Создаем массив из N нулей
+    # Добавление непериодических колебаний с иррациональными частотами
+    for i, freq in enumerate(irrational_freqs):
+        amplitude = 0.1 / (i + 1)  # Уменьшающаяся амплитуда (0.1, 0.05, 0.033...)
+        phase = np.random.uniform(0, 2 * np.pi)  # Случайная фаза
+        harmonic = amplitude * np.sin(2 * np.pi * freq * t / N + phase)
+        s_irr += harmonic
+
+    # Комбинирование равномерного и непериодического сигналов
+    combined_signal = s_random + s_irr
+
+    # Нормализация к диапазону [0, 1]
+    combined_signal = (combined_signal - np.min(combined_signal)) / (np.max(combined_signal) - np.min(combined_signal))
+
+    # Преобразование к нулевому математическому ожиданию и диапазону [-1, 1]
+    final_signal = 2 * (combined_signal - 0.5)
+
+    return final_signal
+
+# Функция компрессора
+def compressor(s, mu=255):
+
+# s - входной сигнал (|s| <= 1)
+# mu - параметр компрессии
+
+    return np.sign(s) * np.log(1 + mu * np.abs(s)) / np.log(1 + mu)
+
+# Функция равномерного квантования
+def uniform_quantizer(x, b=4):
+
+# x - входной сигнал
+# b - разрядность
+
+    # Уровни квантования
+    levels = 2 ** b
+
+    x_scaled = (x + 1) / 2  # Переводим из [-1,1] в [0,1]
+    x_scaled = np.clip(x_scaled, 0, 1)  # Ограничиваем
+
+    x_quantized = np.floor(x_scaled * (levels - 1) + 0.5) # Округляем до ближайшего целого
+    x_quantized = np.clip(x_quantized, 0, levels - 1)
+
+    return x_quantized.astype(int)
+
+# Функция экспандера μ-law
+def expander(y_quantized, mu=255, b=4):
+
+# y_quantized - квантованный сигнал
+
+    levels = 2 ** b
+    # Восстанавливаем из квантованных значений
+    y = (y_quantized / (levels - 1)) * 2 - 1
+
+    # Функция экспандирования сигнала (обратная функции компрессора)
+    expanded = np.sign(y) * (1/mu) * ((1 + mu) ** np.abs(y) - 1)
+    return expanded
+
+# Полная система компандирования
+def companding_system(s, mu=255, b=4):
+
+    # Компрессия
+    s_compressed = compressor(s, mu)
+
+    # Квантование
+    s_quantized = uniform_quantizer(s_compressed, b)
+
+    # Экспандирование
+    expanded = expander(s_quantized, mu, b)
+
+    return expanded, s_quantized
+
+# Расчет SQNR
+def SQNR(s_original, s_new):
+
+    signal_power = np.sum(s_original ** 2)
+    noise_power = np.sum((s_original - s_new) ** 2)
+
+    sqnr = 10 * np.log10(signal_power / noise_power)
+    return sqnr
+
+if __name__ == "__main__":
+
+    N = 10000  # Количество отсчетов
+    b = 4      # Разрядность
+    t = np.arange(N)  # Добавляем определение t
+
+    # Генерация сигнала
+    s_original = generate_signal(N)
+
+    # Зависимость SQNR от параметра μ
+    mu_values = np.linspace(1, 500, 1000)
+    sqnr_values = []
+
+    for mu in mu_values:
+        s_compressed = compressor(s_original, mu)
+        s_quantized = uniform_quantizer(s_compressed, b)
+        expanded = expander(s_quantized, mu, b)
+        sqnr_value = SQNR(s_original, expanded)
+        sqnr_values.append(sqnr_value)
+
+    # Построение графиков
+    plt.figure(figsize=(12, 12))
+
+    # Исходный и восстановленный сигнал (первые 200 отсчетов (иначе будет непрерывный сп))
+    plt.subplot(3, 1, 1)
+    n_plot = 200
+    plt.plot(t[:n_plot], s_original[:n_plot], label='Исходный сигнал')
+    plt.plot(t[:n_plot], expanded[:n_plot], label=f'Восстановленный')
+    plt.xlabel('Время')
+    plt.ylabel('Амплитуда')
+    plt.title('Исходный и восстановленный сигнал')
+    plt.grid(True)
+    plt.legend()
+
+    # Зависимость SQNR от μ
+    plt.subplot(2, 1, 2)
+    plt.plot(mu_values, sqnr_values, 'b-', linewidth=2)
+    plt.xlabel('Параметр μ')
+    plt.ylabel('SQNR, дБ')
+    plt.title('Зависимость SQNR от параметра μ-law компрессии')
+    plt.grid(True)
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
